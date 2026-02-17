@@ -1,0 +1,18 @@
+# Render Blueprint for backend API
+# Deploy: connect GitHub repo and ensure MONGODB_URI, JWT_SECRET, FRONTEND_ORIGIN are set in Render env
+services:
+  - type: web
+    name: split-it-api
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: FRONTEND_ORIGIN
+        sync: false
