@@ -489,7 +489,10 @@ export default function ChannelDetail() {
                   })}
                   {expenseAmount && getSelectedMembers().length > 0 && (() => {
                     const equalAmounts = getEqualShareAmounts();
-                    const shares = getSelectedMembers().map(m => parseFloat(expenseShareAmounts[m._id]) ?? equalAmounts[m._id] ?? 0);
+                    const shares = getSelectedMembers().map(m => {
+                      const custom = parseFloat(expenseShareAmounts[m._id]);
+                      return Number.isFinite(custom) ? custom : (equalAmounts[m._id] ?? 0);
+                    });
                     const sum = shares.reduce((s, v) => s + v, 0);
                     const total = parseFloat(expenseAmount) || 0;
                     const ok = Math.abs(sum - total) <= 0.02;
