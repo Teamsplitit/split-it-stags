@@ -12,6 +12,7 @@ router.post('/:channelId/expenses', [
   param('channelId').isMongoId(),
   body('amount').isFloat({ min: 0.01 }),
   body('description').optional().trim(),
+  body('spentAt').optional(),
   body('splitType').optional().isIn(['equal', 'custom']),
   body('splits').optional().isArray(),
   body('splits.*.user').optional().isMongoId(),
@@ -31,8 +32,9 @@ router.post('/:channelId/expenses', [
     if (!channel.members.some(m => m.toString() === req.user._id.toString())) {
       return res.status(403).json({ error: 'Not a member' });
     }
-    const { amount, description, splitType, splits, paidBy, contributions, splitBetween } = req.body;
+    const { amount, description, spentAt, splitType, splits, paidBy, contributions, splitBetween } = req.body;
     const totalAmount = parseFloat(amount);
+    const spentAtDate = spentAt ? (d => isNaN(d.getTime()) ? undefined : d)(new Date(spentAt)) : undefined;
     const memberIds = channel.members.map(m => m.toString());
 
     const splitBetweenIds = Array.isArray(splitBetween) && splitBetween.length > 0
@@ -85,6 +87,7 @@ router.post('/:channelId/expenses', [
       contributions: finalContributions,
       amount: totalAmount,
       description: description || '',
+      spentAt: spentAtDate,
       splitType: splitType || 'equal',
       splits: finalSplits,
     });
@@ -100,6 +103,7 @@ router.patch('/:channelId/expenses/:expenseId', [
   param('expenseId').isMongoId(),
   body('amount').isFloat({ min: 0.01 }),
   body('description').optional().trim(),
+  body('spentAt').optional(),
   body('splitType').optional().isIn(['equal', 'custom']),
   body('splits').optional().isArray(),
   body('splits.*.user').optional().isMongoId(),
@@ -125,8 +129,9 @@ router.patch('/:channelId/expenses/:expenseId', [
     });
     if (!existing) return res.status(404).json({ error: 'Expense not found' });
 
-    const { amount, description, splitType, splits, paidBy, contributions, splitBetween } = req.body;
+    const { amount, description, spentAt, splitType, splits, paidBy, contributions, splitBetween } = req.body;
     const totalAmount = parseFloat(amount);
+    const spentAtDate = spentAt ? (d => isNaN(d.getTime()) ? undefined : d)(new Date(spentAt)) : undefined;
     const memberIds = channel.members.map(m => m.toString());
 
     const splitBetweenIds = Array.isArray(splitBetween) && splitBetween.length > 0
@@ -175,6 +180,7 @@ router.patch('/:channelId/expenses/:expenseId', [
 
     existing.amount = totalAmount;
     existing.description = description || '';
+    if (spentAtDate !== undefined) existing.spentAt = spentAtDate;
     existing.splitType = splitType || 'equal';
     existing.paidBy = finalContributions[0]?.user;
     existing.contributions = finalContributions;

@@ -32,6 +32,10 @@ const expenseSchema = new mongoose.Schema({
     trim: true,
     default: '',
   },
+  spentAt: {
+    type: Date,
+    required: false,
+  },
   splitType: {
     type: String,
     enum: ['equal', 'custom'],

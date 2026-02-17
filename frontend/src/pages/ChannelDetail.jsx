@@ -18,6 +18,7 @@ export default function ChannelDetail() {
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [expenseAmount, setExpenseAmount] = useState('');
   const [expenseDesc, setExpenseDesc] = useState('');
+  const [expenseDate, setExpenseDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [expensePaidBy, setExpensePaidBy] = useState('');
   const [expenseSplitPayment, setExpenseSplitPayment] = useState(false);
   const [expenseContributions, setExpenseContributions] = useState([]);
@@ -88,6 +89,7 @@ export default function ChannelDetail() {
     let body = {
       amount,
       description: expenseDesc.trim(),
+      spentAt: expenseDate || new Date().toISOString().slice(0, 10),
       splitType: 'custom',
       splits: selectedMembers.map((m, i) => ({ user: m._id, amount: Math.round(shares[i] * 100) / 100 })),
     };
@@ -116,6 +118,7 @@ export default function ChannelDetail() {
       }
       setExpenseAmount('');
       setExpenseDesc('');
+      setExpenseDate(new Date().toISOString().slice(0, 10));
       setExpensePaidBy('');
       setExpenseSplitPayment(false);
       setExpenseContributions([]);
@@ -158,6 +161,7 @@ export default function ChannelDetail() {
     setShowAddExpense(true);
     setExpenseAmount('');
     setExpenseDesc('');
+    setExpenseDate(new Date().toISOString().slice(0, 10));
     setExpensePaidBy('');
     setExpenseSplitPayment(false);
     setExpenseContributions([]);
@@ -174,10 +178,12 @@ export default function ChannelDetail() {
   function openEditExpense(exp) {
     const contribs = exp.contributions?.length > 0 ? exp.contributions : (exp.paidBy ? [{ user: exp.paidBy, amount: exp.amount }] : []);
     const splitPayment = contribs.length > 1;
+    const d = exp.spentAt ? new Date(exp.spentAt) : (exp.createdAt ? new Date(exp.createdAt) : new Date());
     setEditingExpense(exp);
     setShowAddExpense(true);
     setExpenseAmount(String(exp.amount ?? ''));
     setExpenseDesc(exp.description ?? '');
+    setExpenseDate(d.toISOString().slice(0, 10));
     setExpensePaidBy(splitPayment ? '' : toId(contribs[0]?.user));
     setExpenseSplitPayment(splitPayment);
     setExpenseContributions(splitPayment ? contribs.map(c => ({ user: c.user, amount: String(c.amount ?? '') })) : []);
@@ -244,7 +250,7 @@ export default function ChannelDetail() {
       buckets[key].mySpent += myAmount;
     };
     expenses.forEach(e => {
-      const d = e.createdAt ? new Date(e.createdAt) : new Date();
+      const d = (e.spentAt ? new Date(e.spentAt) : null) || (e.createdAt ? new Date(e.createdAt) : null) || new Date();
       const amount = Number(e.amount) || 0;
       const myAmount = getMyContribution(e);
       add(d.getFullYear(), d.getMonth() + 1, amount, myAmount);
@@ -527,6 +533,15 @@ export default function ChannelDetail() {
                 />
               </div>
               <div className="form-group">
+                <label className="label">Date spent</label>
+                <input
+                  type="date"
+                  className="input"
+                  value={expenseDate}
+                  onChange={e => setExpenseDate(e.target.value)}
+                />
+              </div>
+              <div className="form-group">
                 <label className="label">Who paid?</label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                   <input
@@ -678,11 +693,16 @@ export default function ChannelDetail() {
             const splitAmong = exp.splits?.map(s => s.user?.name || s.user?.email).filter(Boolean);
             const iPaid = contribs.some(c => String(c.user?._id ?? c.user) === String(user?._id));
             const rowColor = iPaid ? 'var(--success)' : 'var(--danger)';
+            const spentAt = exp.spentAt ? new Date(exp.spentAt) : (exp.createdAt ? new Date(exp.createdAt) : null);
+            const dateStr = spentAt ? spentAt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
             return (
               <li key={exp._id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, borderLeft: `3px solid ${rowColor}` }}>
                 <div style={{ flex: '1 1 200px' }}>
                   <strong style={{ color: rowColor }}>₹{exp.amount?.toFixed(2)}</strong>
                   {exp.description && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{exp.description}</span>}
+                  {dateStr && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 2 }}>Spent on {dateStr}</div>
+                  )}
                   <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 4 }}>
                     Paid by {paidByText}
                   </div>

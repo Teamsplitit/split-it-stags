@@ -96,8 +96,12 @@ router.get('/:channelId/expenses', [
     const expenses = await Expense.find({ channel: req.params.channelId })
       .populate('paidBy', 'email name')
       .populate('contributions.user', 'email name')
-      .populate('splits.user', 'email name')
-      .sort({ createdAt: -1 });
+      .populate('splits.user', 'email name');
+    expenses.sort((a, b) => {
+      const dateA = a.spentAt || a.createdAt || new Date(0);
+      const dateB = b.spentAt || b.createdAt || new Date(0);
+      return dateB - dateA;
+    });
     res.json({ expenses });
   } catch (err) {
     res.status(500).json({ error: err.message });
