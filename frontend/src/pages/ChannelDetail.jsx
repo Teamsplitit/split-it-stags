@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
 
@@ -30,6 +30,11 @@ export default function ChannelDetail() {
   const [settleError, setSettleError] = useState('');
   const [settleSubmitting, setSettleSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
+  const [spendingView, setSpendingView] = useState('month'); // 'all' | 'month'
+  const [spendingMonth, setSpendingMonth] = useState(() => new Date().getMonth() + 1);
+  const [spendingYear, setSpendingYear] = useState(() => new Date().getFullYear());
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [inviteCodeCopied, setInviteCodeCopied] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -65,7 +70,7 @@ export default function ChannelDetail() {
       setExpenseError('Select at least one person to split between');
       return;
     }
-    const selectedMembers = channel?.members?.filter(m => splitBetweenIds.includes(m._id)) || [];
+    const selectedMembers = channel?.members?.filter(m => splitBetweenIds.some(id => String(id) === String(m._id))) || [];
     const n = selectedMembers.length;
     const equalShare = n > 0 ? amount / n : 0;
     const perPerson = Math.floor(equalShare * 100) / 100;
@@ -97,10 +102,18 @@ export default function ChannelDetail() {
       body.paidBy = expensePaidBy || user?._id;
     }
     try {
-      await api(`/api/channels/${channelId}/expenses`, {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
+      if (editingExpense) {
+        await api(`/api/channels/${channelId}/expenses/${editingExpense._id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(body),
+        });
+        setEditingExpense(null);
+      } else {
+        await api(`/api/channels/${channelId}/expenses`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+      }
       setExpenseAmount('');
       setExpenseDesc('');
       setExpensePaidBy('');
@@ -141,15 +154,57 @@ export default function ChannelDetail() {
   }
 
   function openAddExpense() {
+    setEditingExpense(null);
     setShowAddExpense(true);
+    setExpenseAmount('');
+    setExpenseDesc('');
+    setExpensePaidBy('');
+    setExpenseSplitPayment(false);
+    setExpenseContributions([]);
     setExpenseSplitBetween(channel?.members?.map(m => m._id) || []);
     setExpenseShareAmounts({});
     setExpenseError('');
   }
 
+  function toId(v) {
+    if (v == null) return '';
+    return typeof v === 'object' && v._id != null ? v._id : v;
+  }
+
+  function openEditExpense(exp) {
+    const contribs = exp.contributions?.length > 0 ? exp.contributions : (exp.paidBy ? [{ user: exp.paidBy, amount: exp.amount }] : []);
+    const splitPayment = contribs.length > 1;
+    setEditingExpense(exp);
+    setShowAddExpense(true);
+    setExpenseAmount(String(exp.amount ?? ''));
+    setExpenseDesc(exp.description ?? '');
+    setExpensePaidBy(splitPayment ? '' : toId(contribs[0]?.user));
+    setExpenseSplitPayment(splitPayment);
+    setExpenseContributions(splitPayment ? contribs.map(c => ({ user: c.user, amount: String(c.amount ?? '') })) : []);
+    setExpenseSplitBetween(exp.splits?.map(s => toId(s.user)) ?? (channel?.members?.map(m => toId(m)) || []));
+    setExpenseShareAmounts(
+      (exp.splits || []).reduce((acc, s) => {
+        const id = toId(s.user);
+        if (id) acc[id] = String(s.amount ?? '');
+        return acc;
+      }, {})
+    );
+    setExpenseError('');
+  }
+
+  function closeExpenseForm() {
+    setShowAddExpense(false);
+    setEditingExpense(null);
+    setExpenseError('');
+    setExpenseContributions([]);
+    setExpenseSplitPayment(false);
+    setExpenseSplitBetween([]);
+    setExpenseShareAmounts({});
+  }
+
   function getSelectedMembers() {
     const ids = expenseSplitBetween.length > 0 ? expenseSplitBetween : (channel?.members?.map(m => m._id) || []);
-    return channel?.members?.filter(m => ids.includes(m._id)) || [];
+    return channel?.members?.filter(m => ids.some(eid => String(eid) === String(m._id))) || [];
   }
 
   function getEqualShareAmounts() {
@@ -166,6 +221,87 @@ export default function ChannelDetail() {
 
   function setShareAmount(memberId, value) {
     setExpenseShareAmounts(prev => ({ ...prev, [memberId]: value }));
+  }
+
+  function getMyContribution(expense) {
+    const myId = user?._id?.toString();
+    if (!myId) return 0;
+    const contribs = expense.contributions?.length ? expense.contributions : (expense.paidBy ? [{ user: expense.paidBy, amount: expense.amount }] : []);
+    return contribs.reduce((s, c) => {
+      const id = (c.user?._id ?? c.user)?.toString();
+      return id === myId ? s + (Number(c.amount) || 0) : s;
+    }, 0);
+  }
+
+  const MONTH_LABELS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+  function getSpendingOverTimeData() {
+    const buckets = {};
+    const add = (year, month, amount, myAmount) => {
+      const key = `${year}-${String(month).padStart(2, '0')}`;
+      if (!buckets[key]) buckets[key] = { year, month, key, label: MONTH_LABELS[month - 1], total: 0, mySpent: 0 };
+      buckets[key].total += amount;
+      buckets[key].mySpent += myAmount;
+    };
+    expenses.forEach(e => {
+      const d = e.createdAt ? new Date(e.createdAt) : new Date();
+      const amount = Number(e.amount) || 0;
+      const myAmount = getMyContribution(e);
+      add(d.getFullYear(), d.getMonth() + 1, amount, myAmount);
+    });
+    let entries = Object.values(buckets).map(b => ({
+      ...b,
+      total: Math.round(b.total * 100) / 100,
+      mySpent: Math.round(b.mySpent * 100) / 100,
+      othersSpent: Math.round((b.total - b.mySpent) * 100) / 100,
+    }));
+    entries.sort((a, b) => (a.key < b.key ? -1 : 1));
+
+    if (spendingView === 'all') {
+      entries = entries.slice(-6);
+    } else {
+      const months = [];
+      for (let i = -2; i <= 0; i++) {
+        const d = new Date(spendingYear, spendingMonth - 1 + i, 1);
+        months.push({ year: d.getFullYear(), month: d.getMonth() + 1 });
+      }
+      const keys = new Set(months.map(({ year, month }) => `${year}-${String(month).padStart(2, '0')}`));
+      entries = entries.filter(e => keys.has(e.key));
+      const keyOrder = months.map(({ year, month }) => `${year}-${String(month).padStart(2, '0')}`);
+      entries.sort((a, b) => keyOrder.indexOf(a.key) - keyOrder.indexOf(b.key));
+      entries = keyOrder.map(k => entries.find(e => e.key === k) || {
+        key: k,
+        label: MONTH_LABELS[parseInt(k.slice(5), 10) - 1],
+        total: 0,
+        mySpent: 0,
+        othersSpent: 0,
+        year: parseInt(k.slice(0, 4), 10),
+        month: parseInt(k.slice(5), 10),
+      });
+    }
+    const currentKey = spendingView === 'month' ? `${spendingYear}-${String(spendingMonth).padStart(2, '0')}` : null;
+    return entries.map(e => ({ ...e, isCurrent: e.key === currentKey }));
+  }
+
+  function getSpendingOverTimeSummary() {
+    if (spendingView === 'all') {
+      const total = summary?.totalSpent ?? 0;
+      const myShare = summary?.mySpent ?? 0;
+      const pct = total > 0 ? Math.round((myShare / total) * 100) : 0;
+      return { total, myShare, pct };
+    }
+    const key = `${spendingYear}-${String(spendingMonth).padStart(2, '0')}`;
+    const data = getSpendingOverTimeData().find(d => d.key === key);
+    const total = data?.total ?? 0;
+    const myShare = data?.mySpent ?? 0;
+    const pct = total > 0 ? Math.round((myShare / total) * 100) : 0;
+    return { total, myShare, pct };
+  }
+
+  function getSpendingSubtitle() {
+    if (spendingView === 'all') return 'All time group spending';
+    const monthName = new Date(spendingYear, spendingMonth - 1, 1).toLocaleString('en-US', { month: 'long' });
+    return `${monthName} ${spendingYear} group spending`;
   }
 
   async function deleteExpense(expenseId) {
@@ -316,8 +452,17 @@ export default function ChannelDetail() {
         {simplified.length === 0 ? (
           <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>All settled. No one owes anyone.</p>
         ) : (
+          <div style={{ maxHeight: 280, overflowY: 'auto', margin: '0 -4px', padding: '0 4px' }}>
           <ul style={{ listStyle: 'none' }}>
-            {simplified.map((d, i) => (
+            {simplified.map((d, i) => {
+              const toUserId = String((d.toUser?._id ?? d.toUser) ?? '');
+              const fromUserId = String((d.fromUser?._id ?? d.fromUser) ?? '');
+              const myId = String(user?._id ?? '');
+              const someoneOwesMe = myId && toUserId === myId;
+              const iOwe = myId && fromUserId === myId;
+              const rowColor = someoneOwesMe ? 'var(--success)' : iOwe ? 'var(--danger)' : 'var(--text)';
+              const borderColor = someoneOwesMe ? 'var(--success)' : iOwe ? 'var(--danger)' : 'var(--surface2)';
+              return (
               <li
                 key={i}
                 style={{
@@ -328,9 +473,11 @@ export default function ChannelDetail() {
                   gap: 8,
                   padding: '10px 0',
                   borderBottom: i < simplified.length - 1 ? '1px solid var(--surface2)' : 'none',
+                  borderLeft: `4px solid ${borderColor}`,
+                  paddingLeft: 12,
                 }}
               >
-                <span style={{ flex: '1 1 180px' }}>
+                <span style={{ flex: '1 1 180px', color: rowColor }}>
                   <strong>{(d.fromUser?.name || d.fromUser?.email)}</strong> owes <strong>{(d.toUser?.name || d.toUser?.email)}</strong> ₹{d.amount.toFixed(2)}
                 </span>
                 <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -343,8 +490,10 @@ export default function ChannelDetail() {
                   </button>
                 </span>
               </li>
-            ))}
+            );
+          })}
           </ul>
+          </div>
         )}
       </div>
 
@@ -354,6 +503,7 @@ export default function ChannelDetail() {
         </button>
         {showAddExpense && (
           <div className="card" style={{ marginTop: 12 }}>
+            <div className="card-title" style={{ marginBottom: 12 }}>{editingExpense ? 'Edit expense' : 'Add expense'}</div>
             <form onSubmit={addExpense}>
               <div className="form-group">
                 <label className="label">Amount (₹)</label>
@@ -445,7 +595,7 @@ export default function ChannelDetail() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {channel.members?.map(m => {
                     const id = m._id;
-                    const checked = expenseSplitBetween.length === 0 || expenseSplitBetween.includes(id);
+                    const checked = expenseSplitBetween.length === 0 || expenseSplitBetween.some(eid => String(eid) === String(id));
                     return (
                       <label key={id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                         <input
@@ -506,8 +656,8 @@ export default function ChannelDetail() {
               )}
               {expenseError && <p className="error-msg">{expenseError}</p>}
               <div style={{ display: 'flex', gap: 8 }}>
-                <button type="submit" className="btn btn-primary">Add</button>
-                <button type="button" className="btn btn-ghost" onClick={() => { setShowAddExpense(false); setExpenseError(''); setExpenseContributions([]); setExpenseSplitPayment(false); setExpenseSplitBetween([]); setExpenseShareAmounts({}); }}>Cancel</button>
+                <button type="submit" className="btn btn-primary">{editingExpense ? 'Save' : 'Add'}</button>
+                <button type="button" className="btn btn-ghost" onClick={closeExpenseForm}>Cancel</button>
               </div>
             </form>
           </div>
@@ -518,6 +668,7 @@ export default function ChannelDetail() {
       {expenses.length === 0 ? (
         <p style={{ color: 'var(--text-muted)' }}>No expenses yet.</p>
       ) : (
+        <div style={{ maxHeight: 320, overflowY: 'auto', margin: '0 -4px', padding: '0 4px' }}>
         <ul style={{ listStyle: 'none' }}>
           {expenses.map(exp => {
             const contribs = exp.contributions?.length > 0 ? exp.contributions : (exp.paidBy ? [{ user: exp.paidBy, amount: exp.amount }] : []);
@@ -525,11 +676,12 @@ export default function ChannelDetail() {
               ? contribs.map(c => `${c.user?.name || c.user?.email}: ₹${(c.amount || 0).toFixed(2)}`).join(', ')
               : (contribs[0]?.user?.name || contribs[0]?.user?.email || '—');
             const splitAmong = exp.splits?.map(s => s.user?.name || s.user?.email).filter(Boolean);
-            const canDelete = contribs.some(c => (c.user?._id || c.user) === user?._id);
+            const iPaid = contribs.some(c => String(c.user?._id ?? c.user) === String(user?._id));
+            const rowColor = iPaid ? 'var(--success)' : 'var(--danger)';
             return (
-              <li key={exp._id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8 }}>
-                <div>
-                  <strong>₹{exp.amount?.toFixed(2)}</strong>
+              <li key={exp._id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 8, borderLeft: `3px solid ${rowColor}` }}>
+                <div style={{ flex: '1 1 200px' }}>
+                  <strong style={{ color: rowColor }}>₹{exp.amount?.toFixed(2)}</strong>
                   {exp.description && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{exp.description}</span>}
                   <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 4 }}>
                     Paid by {paidByText}
@@ -540,19 +692,39 @@ export default function ChannelDetail() {
                     </div>
                   )}
                 </div>
-                {canDelete && (
+                <span style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button type="button" className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: '0.85rem' }} onClick={() => openEditExpense(exp)}>
+                    Edit
+                  </button>
                   <button type="button" className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: '0.85rem' }} onClick={() => deleteExpense(exp._id)}>
                     Remove
                   </button>
-                )}
+                </span>
               </li>
             );
           })}
         </ul>
+        </div>
       )}
 
       <div style={{ marginTop: 24, fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-        <p>Invite code: <strong style={{ color: 'var(--text)' }}>{channel.inviteCode}</strong></p>
+        <p style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span>Invite code: <strong style={{ color: 'var(--text)' }}>{channel.inviteCode}</strong></span>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ padding: '4px 10px', fontSize: '0.8rem' }}
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(channel.inviteCode);
+                setInviteCodeCopied(true);
+                setTimeout(() => setInviteCodeCopied(false), 2000);
+              } catch (_) {}
+            }}
+          >
+            {inviteCodeCopied ? 'Copied!' : 'Copy'}
+          </button>
+        </p>
         <p>Share this code so friends can join the channel.</p>
       </div>
         </>
@@ -596,40 +768,263 @@ export default function ChannelDetail() {
       )}
 
       {activeTab === 'spending' && (
-        <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card" style={{ marginBottom: 20, overflow: 'hidden' }}>
           <div className="card-title">Who spent how much</div>
           {pieData.length > 0 ? (
             <>
-              <div style={{ height: 260, width: '100%' }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
+              <div style={{ position: 'relative', minHeight: 240, width: '100%', isolation: 'isolate' }}>
+                <ResponsiveContainer width="100%" height={260}>
+                  <PieChart margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
                     <Pie
                       data={pieData}
                       dataKey="amount"
                       nameKey="name"
                       cx="50%"
                       cy="50%"
-                      outerRadius={90}
-                      label={({ name, amount }) => `${name}: ₹${amount}`}
+                      innerRadius={72}
+                      outerRadius={95}
+                      paddingAngle={1}
                     >
                       {pieData.map((_, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                        <Cell key={i} fill={COLORS[i % COLORS.length]} stroke="var(--surface)" strokeWidth={2} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(v) => [`₹${v}`, 'Spent']} />
-                    <Legend />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null;
+                        const item = payload[0];
+                        return (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: 'calc(50% + 110px)',
+                              top: '50%',
+                              transform: 'translateY(-50%)',
+                              background: 'var(--surface)',
+                              border: '1px solid var(--surface2)',
+                              borderRadius: 8,
+                              padding: '10px 14px',
+                              color: 'var(--text)',
+                              zIndex: 1,
+                              minWidth: 120,
+                              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                            }}
+                          >
+                            <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600 }}>{item.name}</p>
+                            <p style={{ margin: '4px 0 0 0', fontSize: '1rem', color: 'var(--accent)' }}>
+                              ₹{Number(item.value).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            </p>
+                          </div>
+                        );
+                      }}
+                      wrapperStyle={{ zIndex: 1 }}
+                    />
+                    <Legend layout="horizontal" align="center" wrapperStyle={{ paddingTop: 8 }} />
                   </PieChart>
                 </ResponsiveContainer>
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: '50%',
+                    top: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    textAlign: 'center',
+                    pointerEvents: 'none',
+                    zIndex: 10,
+                  }}
+                >
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total</p>
+                  <p style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--accent)', margin: 0 }}>
+                    ₹{(summary?.totalSpent ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
               </div>
-              {summary?.totalSpent != null && (
-                <p style={{ marginTop: 12, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                  Total spent: ₹{summary.totalSpent.toFixed(2)}
-                </p>
-              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 20, marginTop: 20 }}>
+                <div>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 4 }}>Total spent</p>
+                  <p style={{ fontSize: '1.35rem', fontWeight: 700, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
+                    ₹{(summary?.totalSpent ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 4 }}>Your share</p>
+                  <p style={{ fontSize: '1.35rem', fontWeight: 700, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
+                    ₹{(summary?.mySpent ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                  {(summary?.totalSpent != null && summary.totalSpent > 0) && (
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 4, marginBottom: 0 }}>
+                      {Math.round(((summary?.mySpent ?? 0) / summary.totalSpent) * 100)}% of total group spending
+                    </p>
+                  )}
+                </div>
+              </div>
             </>
           ) : (
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No spending yet. Add expenses to see the chart.</p>
+            <>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No spending yet. Add expenses to see the chart.</p>
+              {(summary?.totalSpent != null || summary?.mySpent != null) && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 16 }}>
+                  {summary?.totalSpent != null && (
+                    <div>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 4 }}>Total spent</p>
+                      <p style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--accent)', margin: 0 }}>₹{summary.totalSpent.toFixed(2)}</p>
+                    </div>
+                  )}
+                  {summary?.mySpent != null && (
+                    <div>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 4 }}>Your share</p>
+                      <p style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--accent)', margin: 0 }}>₹{summary.mySpent.toFixed(2)}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
+
+          <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--surface2)' }}>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: 16 }}>{getSpendingSubtitle()}</p>
+            {expenses.length > 0 ? (
+              (() => {
+                const chartData = getSpendingOverTimeData();
+                return (
+              <>
+                <div style={{ width: '100%', minHeight: 200, marginBottom: 24 }}>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 24 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--surface2)" vertical={false} />
+                      <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--text-muted)' }} />
+                      <YAxis hide />
+                      <Tooltip
+                        content={({ active, payload, label }) => {
+                          if (!active || !payload?.length) return null;
+                          const total = payload.reduce((s, p) => s + (Number(p.value) || 0), 0);
+                          return (
+                            <div
+                              style={{
+                                background: 'var(--surface)',
+                                border: '1px solid var(--surface2)',
+                                borderRadius: 10,
+                                padding: '12px 14px',
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                                minWidth: 160,
+                              }}
+                            >
+                              <p style={{ margin: '0 0 10px 0', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text)', borderBottom: '1px solid var(--surface2)', paddingBottom: 6 }}>
+                                {label}
+                              </p>
+                              {payload.map((p) => (
+                                <p key={p.dataKey} style={{ margin: '4px 0', fontSize: '0.9rem', color: 'var(--text)', display: 'flex', justifyContent: 'space-between', gap: 16 }}>
+                                  <span style={{ color: 'var(--text-muted)' }}>{p.name}:</span>
+                                  <span style={{ fontWeight: 600, color: 'var(--accent)' }}>₹{Number(p.value).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                                </p>
+                              ))}
+                              <p style={{ margin: '8px 0 0 0', fontSize: '0.9rem', color: 'var(--text)', display: 'flex', justifyContent: 'space-between', gap: 16, borderTop: '1px solid var(--surface2)', paddingTop: 6 }}>
+                                <span style={{ color: 'var(--text-muted)' }}>Total:</span>
+                                <span style={{ fontWeight: 700, color: 'var(--accent)' }}>₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                              </p>
+                            </div>
+                          );
+                        }}
+                      />
+                      <Bar dataKey="mySpent" name="Your share" stackId="stack" fill="var(--accent)" radius={[0, 0, 0, 0]}>
+                        {chartData.map((entry, i) => (
+                          <Cell key={i} fill={entry.isCurrent ? 'var(--accent)' : 'var(--surface2)'} />
+                        ))}
+                      </Bar>
+                      <Bar dataKey="othersSpent" name="Others" stackId="stack" fill="var(--surface2)" radius={[0, 0, 0, 0]}>
+                        {chartData.map((entry, i) => (
+                          <Cell key={i} fill={entry.isCurrent ? 'rgba(108, 92, 231, 0.5)' : 'var(--surface2)'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                {(() => {
+                  const { total, myShare, pct } = getSpendingOverTimeSummary();
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, marginBottom: 24 }}>
+                      <div>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 4 }}>Total spent</p>
+                        <p style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} />
+                          ₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                      </div>
+                      <div>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 4 }}>Your share</p>
+                        <p style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} />
+                          ₹{myShare.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                        {total > 0 && (
+                          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 4 }}>{pct}% of total group spending</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, paddingTop: 12, borderTop: '1px solid var(--surface2)' }}>
+                  <button
+                    type="button"
+                    onClick={() => setSpendingView('all')}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 20,
+                      border: `1px solid ${spendingView === 'all' ? 'var(--accent)' : 'var(--surface2)'}`,
+                      background: spendingView === 'all' ? 'var(--accent)' : 'transparent',
+                      color: spendingView === 'all' ? 'var(--bg)' : 'var(--text)',
+                      fontSize: '0.85rem',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    All time
+                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (spendingMonth === 1) {
+                          setSpendingMonth(12);
+                          setSpendingYear(y => y - 1);
+                        } else {
+                          setSpendingMonth(m => m - 1);
+                        }
+                        setSpendingView('month');
+                      }}
+                      style={{ padding: 8, background: 'var(--surface2)', border: 'none', borderRadius: 8, color: 'var(--text)', cursor: 'pointer' }}
+                    >
+                      ‹
+                    </button>
+                    <span style={{ minWidth: 140, textAlign: 'center', fontSize: '0.9rem' }}>
+                      {new Date(spendingYear, spendingMonth - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' })}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (spendingMonth === 12) {
+                          setSpendingMonth(1);
+                          setSpendingYear(y => y + 1);
+                        } else {
+                          setSpendingMonth(m => m + 1);
+                        }
+                        setSpendingView('month');
+                      }}
+                      style={{ padding: 8, background: 'var(--surface2)', border: 'none', borderRadius: 8, color: 'var(--text)', cursor: 'pointer' }}
+                    >
+                      ›
+                    </button>
+                  </div>
+                </div>
+              </>
+                );
+              })()
+            ) : (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No expenses yet. Add expenses to see the chart.</p>
+            )}
+          </div>
         </div>
       )}
 

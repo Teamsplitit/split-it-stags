@@ -169,11 +169,13 @@ router.get('/:channelId/summary', [
       amount: Math.round((spentByUser[m._id.toString()] || 0) * 100) / 100,
     }));
 
+    const mySpent = Math.round((spentByUser[req.user._id.toString()] || 0) * 100) / 100;
     res.json({
       balances: balancesWithUser,
       simplifiedDebts: simplifiedWithUsers,
       pieData,
       totalSpent: Math.round(totalSpent * 100) / 100,
+      mySpent,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

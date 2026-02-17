@@ -46,21 +46,11 @@ Create a cluster at [MongoDB Atlas](https://www.mongodb.com/cloud/atlas), get th
 
 ## Deploy
 
-### Netlify (frontend)
+See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for step-by-step Netlify and Render deployment.
 
-1. Connect the repo to Netlify.
-2. Base directory: `frontend`.
-3. Build command: `npm run build`, Publish directory: `dist`.
-4. Add env: `VITE_API_URL` = your Render backend URL (e.g. `https://split-it-api.onrender.com`).
-
-### Render (backend)
-
-1. New Web Service, connect repo, root directory: `backend`.
-2. Build: `npm install`, Start: `npm start`.
-3. Environment:
-   - `MONGODB_URI` – your MongoDB DSN.
-   - `JWT_SECRET` – long random string (Render can generate).
-   - `FRONTEND_ORIGIN` – your Netlify URL (e.g. `https://your-app.netlify.app`).
+**Summary:**
+- **Render (backend):** New Web Service → repo, root directory `backend`, Build `npm install`, Start `npm start`. Set `MONGODB_URI`, `JWT_SECRET`, `FRONTEND_ORIGIN`.
+- **Netlify (frontend):** Import repo → base directory `frontend`, Build `npm run build`, Publish `dist`. Set `VITE_API_URL` to your Render URL.
 
 ## Features
 
