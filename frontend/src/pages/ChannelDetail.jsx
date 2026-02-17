@@ -29,6 +29,7 @@ export default function ChannelDetail() {
   const [settleNote, setSettleNote] = useState('');
   const [settleError, setSettleError] = useState('');
   const [settleSubmitting, setSettleSubmitting] = useState(false);
+  const [activeTab, setActiveTab] = useState('overview');
 
   const load = useCallback(async () => {
     try {
@@ -237,7 +238,7 @@ export default function ChannelDetail() {
         gap: 12,
         padding: '16px 0',
         borderBottom: '1px solid var(--surface2)',
-        marginBottom: 20,
+        marginBottom: 12,
       }}>
         <button type="button" className="btn btn-ghost" onClick={() => navigate('/')} style={{ padding: '8px 12px' }}>
           ← Back
@@ -245,38 +246,71 @@ export default function ChannelDetail() {
         <h1 style={{ fontSize: '1.25rem', fontWeight: 700, flex: 1 }}>{channel.name}</h1>
       </header>
 
-      {pieData.length > 0 && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <div className="card-title">Who spent how much</div>
-          <div style={{ height: 240, width: '100%' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  dataKey="amount"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={80}
-                  label={({ name, amount }) => `${name}: ₹${amount}`}
-                >
-                  {pieData.map((_, i) => (
-                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(v) => [`₹${v}`, 'Spent']} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          {summary?.totalSpent != null && (
-            <p style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-              Total spent: ₹{summary.totalSpent.toFixed(2)}
-            </p>
-          )}
-        </div>
-      )}
+      <div style={{
+        display: 'flex',
+        gap: 4,
+        marginBottom: 20,
+        borderBottom: '1px solid var(--surface2)',
+        paddingBottom: 0,
+      }}>
+        <button
+          type="button"
+          onClick={() => setActiveTab('overview')}
+          style={{
+            flex: 1,
+            padding: '10px 12px',
+            fontSize: '0.9rem',
+            fontWeight: 600,
+            border: 'none',
+            borderBottom: activeTab === 'overview' ? '2px solid var(--accent)' : '2px solid transparent',
+            background: 'none',
+            color: activeTab === 'overview' ? 'var(--accent)' : 'var(--text-muted)',
+            cursor: 'pointer',
+            marginBottom: '-1px',
+          }}
+        >
+          Overview
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('settlements')}
+          style={{
+            flex: 1,
+            padding: '10px 12px',
+            fontSize: '0.9rem',
+            fontWeight: 600,
+            border: 'none',
+            borderBottom: activeTab === 'settlements' ? '2px solid var(--accent)' : '2px solid transparent',
+            background: 'none',
+            color: activeTab === 'settlements' ? 'var(--accent)' : 'var(--text-muted)',
+            cursor: 'pointer',
+            marginBottom: '-1px',
+          }}
+        >
+          Settlements
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('spending')}
+          style={{
+            flex: 1,
+            padding: '10px 12px',
+            fontSize: '0.9rem',
+            fontWeight: 600,
+            border: 'none',
+            borderBottom: activeTab === 'spending' ? '2px solid var(--accent)' : '2px solid transparent',
+            background: 'none',
+            color: activeTab === 'spending' ? 'var(--accent)' : 'var(--text-muted)',
+            cursor: 'pointer',
+            marginBottom: '-1px',
+          }}
+        >
+          Spending
+        </button>
+      </div>
 
+      {activeTab === 'overview' && (
+        <>
       <div className="card" style={{ marginBottom: 20 }}>
         <div className="card-title">Balances & Settle up</div>
         {simplified.length === 0 ? (
@@ -313,39 +347,6 @@ export default function ChannelDetail() {
           </ul>
         )}
       </div>
-
-      {settlements.length > 0 && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <div className="card-title">Recorded settlements</div>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 12 }}>
-            These are payments already recorded. Remove one if it was added by mistake.
-          </p>
-          <ul style={{ listStyle: 'none' }}>
-            {settlements.map(s => (
-              <li
-                key={s._id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                  gap: 8,
-                  padding: '8px 0',
-                  borderBottom: '1px solid var(--surface2)',
-                }}
-              >
-                <span>
-                  <strong>{(s.fromUser?.name || s.fromUser?.email)}</strong> paid <strong>{(s.toUser?.name || s.toUser?.email)}</strong> ₹{(s.amount || 0).toFixed(2)}
-                  {s.note && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>({s.note})</span>}
-                </span>
-                <button type="button" className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: '0.85rem' }} onClick={() => deleteSettlement(s._id)}>
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       <div style={{ marginBottom: 20 }}>
         <button type="button" className="btn btn-primary btn-block" onClick={openAddExpense}>
@@ -551,6 +552,83 @@ export default function ChannelDetail() {
         <p>Invite code: <strong style={{ color: 'var(--text)' }}>{channel.inviteCode}</strong></p>
         <p>Share this code so friends can join the channel.</p>
       </div>
+        </>
+      )}
+
+      {activeTab === 'settlements' && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div className="card-title">Past settlements</div>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 12 }}>
+            Payments already recorded. Remove one if it was added by mistake.
+          </p>
+          {settlements.length === 0 ? (
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No settlements recorded yet.</p>
+          ) : (
+            <ul style={{ listStyle: 'none' }}>
+              {settlements.map(s => (
+                <li
+                  key={s._id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: 8,
+                    padding: '8px 0',
+                    borderBottom: '1px solid var(--surface2)',
+                  }}
+                >
+                  <span>
+                    <strong>{(s.fromUser?.name || s.fromUser?.email)}</strong> paid <strong>{(s.toUser?.name || s.toUser?.email)}</strong> ₹{(s.amount || 0).toFixed(2)}
+                    {s.note && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>({s.note})</span>}
+                  </span>
+                  <button type="button" className="btn btn-ghost" style={{ padding: '6px 12px', fontSize: '0.85rem' }} onClick={() => deleteSettlement(s._id)}>
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'spending' && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div className="card-title">Who spent how much</div>
+          {pieData.length > 0 ? (
+            <>
+              <div style={{ height: 260, width: '100%' }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      dataKey="amount"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={90}
+                      label={({ name, amount }) => `${name}: ₹${amount}`}
+                    >
+                      {pieData.map((_, i) => (
+                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(v) => [`₹${v}`, 'Spent']} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              {summary?.totalSpent != null && (
+                <p style={{ marginTop: 12, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  Total spent: ₹{summary.totalSpent.toFixed(2)}
+                </p>
+              )}
+            </>
+          ) : (
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No spending yet. Add expenses to see the chart.</p>
+          )}
+        </div>
+      )}
 
       {settleModal && (
         <div
